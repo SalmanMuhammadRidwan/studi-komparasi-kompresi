@@ -1,0 +1,7 @@
+# Mengabaikan file gambar sementara hasil running streamlit
+temp_input_*
+temp_output_*
+
+# Mengabaikan cache Python
+__pycache__/
+*.pyc
