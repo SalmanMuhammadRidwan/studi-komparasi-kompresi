@@ -14,17 +14,17 @@ st.set_page_config(page_title="Uji Kompresi Citra", layout="wide", initial_sideb
 # ==========================================
 # INISIALISASI SESSION STATE
 # ==========================================
-if 'riwayat' not in st.session_state:
-    st.session_state.riwayat = []
+if 'riwayat_batch' not in st.session_state:
+    st.session_state.riwayat_batch = []
 if 'counter' not in st.session_state:
     st.session_state.counter = 0
 
 # ==========================================
-# HEADER & DESKRIPSI (Gaya Objektif & Profesional)
+# HEADER & DESKRIPSI
 # ==========================================
 st.title("📊 Platform Evaluasi Kompresi Citra Digital")
 st.markdown("""
-Sistem ini dirancang untuk melakukan studi komparasi terhadap efisiensi, performa, dan hasil visual dari tiga metode transformasi citra: **Discrete Wavelet Transform (DWT)**, **Discrete Cosine Transform (DCT)**, dan **Chroma Subsampling**.
+Sistem komparasi multi-citra untuk mengevaluasi efisiensi reduksi data, performa waktu, dan hasil visual dari metode **DWT**, **DCT**, dan **Chroma Subsampling**.
 """)
 
 # ==========================================
@@ -34,25 +34,31 @@ with st.sidebar:
     st.header("⚙️ Parameter Pengujian")
     
     sumber_file = st.radio("Sumber Citra Uji:", ["Unggah Mandiri", "Pilih dari Dataset"])
-    file_gambar = None
-    nama_file_asli = ""
+    daftar_file_proses = []
     
     if sumber_file == "Unggah Mandiri":
-        uploaded_file = st.file_uploader("Unggah berkas (.bmp, .jpg, .png)", type=['bmp', 'jpg', 'jpeg', 'png'])
-        if uploaded_file is not None:
-            file_gambar = Image.open(uploaded_file)
-            nama_file_asli = uploaded_file.name
+        uploaded_files = st.file_uploader("Unggah maksimal 10 berkas", type=['bmp', 'jpg', 'jpeg', 'png'], accept_multiple_files=True)
+        if uploaded_files:
+            if len(uploaded_files) > 10:
+                st.warning("⚠️ Batas maksimal 10 berkas. Hanya 10 berkas pertama yang diproses.")
+                uploaded_files = uploaded_files[:10]
+            for uf in uploaded_files:
+                daftar_file_proses.append({"nama": uf.name, "objek": Image.open(uf)})
+                
     else:
         folder_dataset = "dataset"
         if not os.path.exists(folder_dataset):
             os.makedirs(folder_dataset)
-            
-        daftar_file = [f for f in os.listdir(folder_dataset) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
+        daftar_dataset = [f for f in os.listdir(folder_dataset) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
         
-        if len(daftar_file) > 0:
-            pilihan = st.selectbox("Pilih citra uji:", daftar_file)
-            file_gambar = Image.open(os.path.join(folder_dataset, pilihan))
-            nama_file_asli = pilihan
+        if len(daftar_dataset) > 0:
+            pilihan_dataset = st.multiselect("Pilih maksimal 10 citra uji:", daftar_dataset)
+            if pilihan_dataset:
+                if len(pilihan_dataset) > 10:
+                    st.warning("⚠️ Batas maksimal 10 berkas. Hanya 10 berkas pertama yang diproses.")
+                    pilihan_dataset = pilihan_dataset[:10]
+                for pd_file in pilihan_dataset:
+                    daftar_file_proses.append({"nama": pd_file, "objek": Image.open(os.path.join(folder_dataset, pd_file))})
         else:
             st.warning("⚠️ Direktori 'dataset' kosong.")
             
@@ -64,156 +70,183 @@ with st.sidebar:
         default=["DWT (Wavelet)", "DCT (Cosine)", "Chroma Subsampling"]
     )
     
-    tombol_proses = st.button("🚀 Eksekusi Komparasi", use_container_width=True, type="primary")
-    
-    if len(st.session_state.riwayat) > 0:
-        if st.button("🗑️ Bersihkan Memori Sesi", use_container_width=True):
-            st.session_state.riwayat = []
-            st.session_state.counter = 0
-            st.rerun()
+    tombol_proses = st.button("🚀 Eksekusi Batch Komparasi", width="stretch", type="primary")
 
 # ==========================================
-# PROSES EKSEKUSI & PENGUKURAN EMPIRIS
+# PROSES EKSEKUSI BATCH MULTI-CITRA
 # ==========================================
-if file_gambar is not None and tombol_proses:
-    if len(algoritma_pilihan) == 0:
+if tombol_proses:
+    if len(daftar_file_proses) == 0:
+        st.error("Pilih minimal 1 citra untuk diproses.")
+    elif len(algoritma_pilihan) == 0:
         st.error("Pilih minimal 1 metode transformasi.")
     else:
         st.session_state.counter += 1
-        id_unik = st.session_state.counter
-        input_path = f"temp_input_{id_unik}.bmp"
+        batch_id = st.session_state.counter
         
-        # Simpan file statis
-        file_gambar.convert('RGB').save(input_path, format="BMP")
-        ukuran_asli = os.path.getsize(input_path)
-        
-        hasil_job = {
-            "nama_file": nama_file_asli,
-            "input_path": input_path,
-            "ukuran_asli_kb": ukuran_asli / 1024,
-            "hasil_kompresi": {}
+        batch_result = {
+            "batch_id": batch_id,
+            "waktu_eksekusi": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "data_citra": []
         }
         
+        total_proses = len(daftar_file_proses) * len(algoritma_pilihan)
         progress_bar = st.progress(0)
-        step = 100 / len(algoritma_pilihan)
+        status_text = st.empty()
         
-        for i, algo in enumerate(algoritma_pilihan):
-            output_path = f"temp_output_{id_unik}_{algo[:3]}.bmp"
+        step_current = 0
+        
+        for citra in daftar_file_proses:
+            # 1. Pisahkan nama file dari ekstensinya (misal: "1.bmp" menjadi "1")
+            nama_tanpa_ekstensi = os.path.splitext(citra['nama'])[0]
             
-            # PENGUKURAN WAKTU EKSEKUSI (Mulai)
-            start_time = time.time()
+            # 2. Gunakan nama_tanpa_ekstensi pada string path
+            input_path = f"temp_input_b{batch_id}_{nama_tanpa_ekstensi}.bmp"
             
-            try:
-                if algo == "DWT (Wavelet)":
-                    metrik = kompresi_dwt(input_path, output_path)
-                elif algo == "DCT (Cosine)":
-                    metrik = kompresi_dct(input_path, output_path)
-                elif algo == "Chroma Subsampling":
-                    metrik = kompresi_chroma(input_path, output_path)
-                
-                # PENGUKURAN WAKTU EKSEKUSI (Selesai)
-                end_time = time.time()
-                waktu_eksekusi = end_time - start_time
-                
-                metrik["waktu_eksekusi_detik"] = waktu_eksekusi
-                
-                hasil_job["hasil_kompresi"][algo] = {
-                    "path": output_path,
-                    "metrik": metrik
-                }
-            except Exception as e:
-                st.error(f"Kegagalan pada {algo}: {e}")
-                
-            progress_bar.progress(int((i + 1) * step))
+            img_baseline = citra['objek'].convert('RGB')
+            img_baseline.thumbnail((800, 800)) 
+            img_baseline.save(input_path, format="BMP")
             
-        st.session_state.riwayat.insert(0, hasil_job)
-        st.toast('Proses komparasi berhasil dieksekusi!', icon='✅')
+            ukuran_asli = os.path.getsize(input_path)
+            
+            hasil_per_citra = {
+                "nama_file": citra['nama'],
+                "input_path": input_path,
+                "ukuran_asli_kb": ukuran_asli / 1024,
+                "kompresi": {}
+            }
+            
+            for algo in algoritma_pilihan:
+                status_text.text(f"Memproses {citra['nama']} dengan {algo}...")
+                output_path = f"temp_output_b{batch_id}_{algo[:3]}_{nama_tanpa_ekstensi}.bmp"
+                start_time = time.time()
+                
+                try:
+                    if algo == "DWT (Wavelet)":
+                        metrik = kompresi_dwt(input_path, output_path)
+                    elif algo == "DCT (Cosine)":
+                        metrik = kompresi_dct(input_path, output_path)
+                    elif algo == "Chroma Subsampling":
+                        metrik = kompresi_chroma(input_path, output_path)
+                        
+                    metrik["waktu_eksekusi_detik"] = time.time() - start_time
+                    hasil_per_citra["kompresi"][algo] = {"path": output_path, "metrik": metrik}
+                except Exception as e:
+                    st.error(f"Kegagalan pada {algo} ({citra['nama']}): {e}")
+                
+                step_current += 1
+                progress_bar.progress(step_current / total_proses)
+                
+            batch_result["data_citra"].append(hasil_per_citra)
+            
+        status_text.empty()
+        st.session_state.riwayat_batch.insert(0, batch_result)
+        st.toast(f'Batch #{batch_id} selesai dieksekusi!', icon='✅')
+
+    if len(st.session_state.riwayat_batch) > 0:
+        st.sidebar.divider()
+    
+        if st.sidebar.button("🗑️ Hapus Riwayat & File Lokal", type="primary"):
+            file_sampah = [f for f in os.listdir('.') if f.startswith('temp_input_') or f.startswith('temp_output_')]
+        
+            for f in file_sampah:
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception as e:
+                    pass 
+        
+            st.session_state.riwayat_batch = []
+            st.session_state.counter = 0
+            st.rerun()
 
 # ==========================================
 # TATA LETAK UI: TAB DINAMIS
 # ==========================================
 tab_visual, tab_grafik, tab_matriks = st.tabs([
-    "🖼️ Visualisasi Output", 
-    "📈 Analisis Grafik Data", 
-    "🗂️ Matriks Komparasi"
+    "🖼️ Visualisasi Komparasi Citra", 
+    "📈 Analisis Grafik Antar-Citra", 
+    "🗂️ Matriks & Data Agregat"
 ])
 
 # ==========================================
-# TAB 1: VISUALISASI OUTPUT
+# TAB 1: VISUALISASI KOMPARASI CITRA
 # ==========================================
 with tab_visual:
-    if len(st.session_state.riwayat) == 0:
-        st.info("Silakan inisiasi pengujian melalui panel konfigurasi.")
+    if len(st.session_state.riwayat_batch) == 0:
+        st.info("Silakan unggah citra dan jalankan pengujian melalui panel di sebelah kiri.")
     else:
-        for item in st.session_state.riwayat:
-            with st.expander(f"Hasil Pengujian: {item['nama_file']} (Klik untuk melihat detail)", expanded=True):
-                st.markdown(f"**Ukuran Baseline (.bmp):** `{item['ukuran_asli_kb']:.2f} KB`")
-                
-                jumlah_algoritma = len(item["hasil_kompresi"])
+        batch_terbaru = st.session_state.riwayat_batch[0]
+        st.success(f"Menampilkan visualisasi dari Eksekusi Batch #{batch_terbaru['batch_id']} ({len(batch_terbaru['data_citra'])} Citra)")
+        
+        for item in batch_terbaru['data_citra']:
+            with st.expander(f"📄 Citra: {item['nama_file']} | Baseline: {item['ukuran_asli_kb']:.2f} KB", expanded=False):
+                jumlah_algoritma = len(item["kompresi"])
                 kolom = st.columns(jumlah_algoritma + 1)
                 
                 with kolom[0]:
                     st.image(item['input_path'], caption="Citra Referensi (100%)")
                 
-                for i, (nama_algo, data) in enumerate(item["hasil_kompresi"].items()):
+                for i, (nama_algo, data) in enumerate(item["kompresi"].items()):
                     with kolom[i + 1]:
                         st.image(data['path'], caption=f"Hasil: {nama_algo}")
-                        
-                        # Menampilkan Metrik dengan styling warna dari Streamlit
                         st.metric(
-                            label="Ukuran Data", 
+                            label=f"Reduksi {nama_algo[:3]}", 
                             value=f"{data['metrik']['ukuran_kompresi_kb']:.2f} KB", 
                             delta=f"-{data['metrik']['persentase_pengurangan']:.2f}%",
                             delta_color="inverse"
                         )
-                        st.caption(f"⏱️ Waktu: {data['metrik']['waktu_eksekusi_detik']:.3f} dtk")
 
 # ==========================================
-# TAB 2: ANALISIS GRAFIK DATA (EMPIRIS)
+# TAB 2: ANALISIS GRAFIK DATA ANTAR-CITRA
 # ==========================================
 with tab_grafik:
-    if len(st.session_state.riwayat) > 0:
-        data_terbaru = st.session_state.riwayat[0]
-        st.subheader(f"Performa Pengujian Terakhir: {data_terbaru['nama_file']}")
+    if len(st.session_state.riwayat_batch) > 0:
+        batch_terbaru = st.session_state.riwayat_batch[0]
+        st.header("Analisis Performa Berdasarkan Karakteristik Citra")
+        st.write("Grafik di bawah ini membandingkan bagaimana algoritma merespons berbagai citra yang berbeda secara bersamaan.")
         
-        # Ekstraksi Data untuk Grafik
-        df_grafik = {
-            "Algoritma": [],
-            "Ukuran (KB)": [],
-            "Waktu (Detik)": []
-        }
+        data_efisiensi = {"Nama File": []}
+        data_waktu = {"Nama File": []}
         
-        # Masukkan data Asli sebagai Baseline
-        df_grafik["Algoritma"].append("Baseline (Asli)")
-        df_grafik["Ukuran (KB)"].append(data_terbaru["ukuran_asli_kb"])
-        df_grafik["Waktu (Detik)"].append(0.0) # Baseline tidak memiliki waktu eksekusi
-        
-        for algo, data in data_terbaru["hasil_kompresi"].items():
-            df_grafik["Algoritma"].append(algo)
-            df_grafik["Ukuran (KB)"].append(data["metrik"]["ukuran_kompresi_kb"])
-            df_grafik["Waktu (Detik)"].append(data["metrik"]["waktu_eksekusi_detik"])
+        algoritma_terdeteksi = list(batch_terbaru['data_citra'][0]['kompresi'].keys())
+        for algo in algoritma_terdeteksi:
+            data_efisiensi[algo] = []
+            data_waktu[algo] = []
             
-        df_visual = pd.DataFrame(df_grafik).set_index("Algoritma")
+        for citra in batch_terbaru['data_citra']:
+            data_efisiensi["Nama File"].append(citra['nama_file'])
+            data_waktu["Nama File"].append(citra['nama_file'])
+            
+            for algo in algoritma_terdeteksi:
+                if algo in citra["kompresi"]:
+                    data_efisiensi[algo].append(citra["kompresi"][algo]["metrik"]["persentase_pengurangan"])
+                    data_waktu[algo].append(citra["kompresi"][algo]["metrik"]["waktu_eksekusi_detik"])
+                else:
+                    data_efisiensi[algo].append(0)
+                    data_waktu[algo].append(0)
+
+        df_efisiensi = pd.DataFrame(data_efisiensi).set_index("Nama File")
+        df_waktu = pd.DataFrame(data_waktu).set_index("Nama File")
         
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            st.markdown("**Perbandingan Ukuran Data (Lebih rendah lebih baik)**")
-            st.bar_chart(df_visual[["Ukuran (KB)"]], color="#FF4B4B")
+            st.subheader("1. Efisiensi Reduksi Ruang (%)")
+            st.write("Semakin tinggi grafik, semakin banyak memori yang dihemat.")
+            st.bar_chart(df_efisiensi)
             
         with col_g2:
-            st.markdown("**Performa Kecepatan Komputasi (Lebih rendah lebih baik)**")
-            # Hilangkan baseline (Asli) dari grafik waktu karena bernilai 0
-            df_waktu = df_visual.drop("Baseline (Asli)")
-            st.bar_chart(df_waktu[["Waktu (Detik)"]], color="#0068C9")
+            st.subheader("2. Waktu Komputasi (Detik)")
+            st.write("Semakin rendah grafik, semakin cepat algoritma bekerja.")
+            st.bar_chart(df_waktu)
     else:
-        st.info("Grafik empiris akan muncul setelah eksekusi pengujian.")
+        st.info("Visualisasi antar-citra akan muncul setelah eksekusi batch selesai.")
 
 # ==========================================
-# TAB 3: MATRIKS KOMPARASI (TEORI + EMPIRIS)
+# TAB 3: MATRIKS KOMPARASI & DATA AGREGAT
 # ==========================================
 with tab_matriks:
     st.subheader("I. Matriks Komparasi Teoretis")
-    st.write("Karakteristik fundamental dari masing-masing algoritma terhadap pemrosesan citra spasial dan frekuensi.")
     
     data_teori = {
         "Parameter Analisis": [
@@ -228,21 +261,21 @@ with tab_matriks:
             "Detail frekuensi tinggi (seperti tekstur mikro atau tepi tajam objek).", 
             "Gambar menjadi sedikit lebih halus atau agak kabur (Blur).", 
             "Menengah (Menganalisis gelombang pada seluruh kanvas gambar).",
-            "Format kompresi canggih seperti JPEG 2000."
+            "Format kompresi resolusi tinggi seperti JPEG 2000."
         ],
         "DCT (Cosine)": [
-            "Membagi gambar menjadi kotak-kotak kecil (8x8 piksel) lalu menganalisis frekuensinya.", 
-            "Detail berlebih di dalam setiap kotak 8x8 yang tidak terlalu disadari mata manusia.", 
-            "Muncul kotak-kotak kecil mirip mosaik (Blocking Artifacts) jika kompresi terlalu tinggi.", 
-            "Tinggi (Membutuhkan perhitungan matematis rumit berulang-ulang pada tiap kotak kecil).",
-            "Format standar JPEG yang digunakan sehari-hari."
+            "Membagi gambar menjadi kotak-kotak kecil (8x8) lalu menganalisis frekuensinya.", 
+            "Detail berlebih di dalam setiap kotak 8x8 yang kurang disadari mata manusia.", 
+            "Muncul kotak-kotak kecil mirip mosaik (Blocking Artifacts) di kompresi ekstrem.", 
+            "Tinggi (Membutuhkan perhitungan matematis berulang pada setiap blok matriks).",
+            "Format gambar standar industri harian (JPEG/JPG)."
         ],
         "Chroma Subsampling": [
-            "Memisahkan elemen cahaya (terang/gelap) dari elemen warna gambar.", 
-            "Setengah dari informasi warna asli (namun informasi cahaya dipertahankan 100%).", 
-            "Sangat jernih. Mata manusia lebih sensitif pada cahaya dibanding warna, sehingga efek kompresinya nyaris tidak terlihat.", 
-            "Sangat Rendah / Paling Cepat (Hanya memotong dan melewati piksel warna secara langsung).",
-            "Transmisi sinyal TV Digital, Video YouTube, dan format WebP."
+            "Memisahkan elemen cahaya (terang/gelap) dari elemen warna citra digital.", 
+            "50% dari informasi warna asli (informasi intensitas cahaya utuh 100%).", 
+            "Sangat jernih. Mata manusia lemah terhadap detail warna, degradasi tidak kasat mata.", 
+            "Sangat Cepat (Hanya melompati piksel matriks secara linear).",
+            "Sistem transmisi TV Digital, Video Streaming (MPEG), dan WebP."
         ]
     }
     df_teori = pd.DataFrame(data_teori).set_index("Parameter Analisis")
@@ -250,28 +283,24 @@ with tab_matriks:
     
     st.divider()
     
-    st.subheader("II. Matriks Hasil Empiris (Real-Time)")
-    st.write("Tabel di bawah ini dihasilkan secara dinamis berdasarkan kalkulasi pengujian citra yang terakhir kali dieksekusi.")
-    
-    if len(st.session_state.riwayat) > 0:
-        data_terbaru = st.session_state.riwayat[0]
+    if len(st.session_state.riwayat_batch) > 0:
+        batch_terbaru = st.session_state.riwayat_batch[0]
+        st.subheader(f"II. Matriks Hasil Empiris: Batch #{batch_terbaru['batch_id']}")
+        st.write("Tabel di bawah ini merupakan rincian data mentah dari seluruh citra yang diuji pada sesi eksekusi terakhir.")
         
-        data_empiris = {
-            "Algoritma Evaluasi": [],
-            "Ukuran Asli (KB)": [],
-            "Ukuran Reduksi (KB)": [],
-            "Persentase Efisiensi": [],
-            "Waktu Komputasi (Detik)": []
-        }
-        
-        for algo, data in data_terbaru["hasil_kompresi"].items():
-            data_empiris["Algoritma Evaluasi"].append(algo)
-            data_empiris["Ukuran Asli (KB)"].append(f"{data_terbaru['ukuran_asli_kb']:.2f}")
-            data_empiris["Ukuran Reduksi (KB)"].append(f"{data['metrik']['ukuran_kompresi_kb']:.2f}")
-            data_empiris["Persentase Efisiensi"].append(f"{data['metrik']['persentase_pengurangan']:.2f}%")
-            data_empiris["Waktu Komputasi (Detik)"].append(f"{data['metrik']['waktu_eksekusi_detik']:.4f}")
-            
-        df_empiris = pd.DataFrame(data_empiris).set_index("Algoritma Evaluasi")
-        st.dataframe(df_empiris, use_container_width=True)
+        data_tabel_master = []
+        for citra in batch_terbaru['data_citra']:
+            for algo, data in citra["kompresi"].items():
+                data_tabel_master.append({
+                    "Nama File Citra": citra['nama_file'],
+                    "Algoritma": algo,
+                    "Ukuran Asli (KB)": round(citra['ukuran_asli_kb'], 2),
+                    "Ukuran Reduksi (KB)": round(data['metrik']['ukuran_kompresi_kb'], 2),
+                    "Persentase Hemat (%)": round(data['metrik']['persentase_pengurangan'], 2),
+                    "Waktu (Detik)": round(data['metrik']['waktu_eksekusi_detik'], 4)
+                })
+                
+        df_master = pd.DataFrame(data_tabel_master)
+        st.dataframe(df_master, width="stretch")
     else:
-        st.info("Data empiris kosong. Harap jalankan pengujian untuk menampilkan matriks komparasi numerik.")
+        st.info("Data empiris kosong. Harap jalankan pengujian untuk menampilkan matriks rekapitulasi data.")
